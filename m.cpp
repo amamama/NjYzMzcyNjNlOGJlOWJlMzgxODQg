@@ -2,6 +2,8 @@
 
 #include "stm32f4xx.h"
 
+#define SYS_FREQ 84000000
+
 
 //整数から文字列への変換
 void itoa(char* str, int i){
@@ -320,18 +322,26 @@ namespace SPI{
 		GPIO_PinAFConfig(spi1_miso.getGPIO(), spi1_miso.getPinSource(), GPIO_AF_SPI1);
 		GPIO_PinAFConfig(spi1_mosi.getGPIO(), spi1_mosi.getPinSource(), GPIO_AF_SPI1);
 
-		GPIO_InitStructure.GPIO_Pin = spi2_clk.getPin() | spi2_miso.getPin() | spi2_mosi.getPin();
+		GPIO_InitStructure.GPIO_Pin = spi2_miso.getPin();
 		GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
 		GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 		GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
 		GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+		GPIO_Init(spi2_miso.getGPIO(), &GPIO_InitStructure);
+
+		GPIO_InitStructure.GPIO_Pin = spi2_clk.getPin() | spi2_mosi.getPin();
+		GPIO_InitStructure.GPIO_OType = GPIO_OType_OD;
 		GPIO_Init(spi2_clk.getGPIO(), &GPIO_InitStructure);
 
-		GPIO_InitStructure.GPIO_Pin = spi3_clk.getPin() | spi3_miso.getPin() | spi3_mosi.getPin();
+		GPIO_InitStructure.GPIO_Pin = spi3_miso.getPin();
 		GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
 		GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 		GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
 		GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+		GPIO_Init(spi3_miso.getGPIO(), &GPIO_InitStructure);
+
+		GPIO_InitStructure.GPIO_Pin = spi3_clk.getPin() | spi3_mosi.getPin();
+		GPIO_InitStructure.GPIO_OType = GPIO_OType_OD;
 		GPIO_Init(spi3_clk.getGPIO(), &GPIO_InitStructure);
 
 		GPIO_PinAFConfig(spi2_clk.getGPIO(), spi2_clk.getPinSource(), GPIO_AF_SPI2);
@@ -408,6 +418,12 @@ namespace SPI{
 }
 
 namespace Timer{
+
+	unsigned short tim2_pres = SYS_FREQ / 1000;
+	unsigned short tim2_per = 100;
+	unsigned short tim3_pres = SYS_FREQ / 10000;
+	unsigned short tim3_per = 50;
+
 	void setting(void){
 		//クロック供給
 		RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2 | RCC_APB1Periph_TIM3, ENABLE); //タイマ2有効化
@@ -429,8 +445,8 @@ namespace Timer{
 		//タイマ設定
 		TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure = { 0 };
 		// 42MHz*2=84MHz? -> 10kHz -> 10kHz -> 1Hz
-		TIM_TimeBaseStructure.TIM_Period = 100 - 1;//何カウントしたら割り込みするか10kHz-->100Hz ==> PIDかけられる?
-		TIM_TimeBaseStructure.TIM_Prescaler = 8400 - 1;//一カウントするのに何クロック要求するか84MHz-->10kHz
+		TIM_TimeBaseStructure.TIM_Period = tim2_per - 1;//何カウントしたら割り込みするか10kHz-->100Hz ==> PIDかけられる?
+		TIM_TimeBaseStructure.TIM_Prescaler = tim2_pres - 1;//一カウントするのに何クロック要求するか84MHz-->10kHz
 		TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;//84MHz / 1 = 84MHz
 		TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 		TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
@@ -439,8 +455,8 @@ namespace Timer{
 		TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);
 
 		// 42MHz*2=84MHz? -> 10kHz -> 10kHz -> 1Hz
-		TIM_TimeBaseStructure.TIM_Period = 50 - 1;//何カウントしたら割り込みするか10kHz-->100Hz ==> PIDかけられる?
-		TIM_TimeBaseStructure.TIM_Prescaler = 840 - 1;//一カウントするのに何クロック要求するか84MHz-->10kHz
+		TIM_TimeBaseStructure.TIM_Period = tim3_per - 1;//何カウントしたら割り込みするか10kHz-->100Hz ==> PIDかけられる?
+		TIM_TimeBaseStructure.TIM_Prescaler = tim3_pres - 1;//一カウントするのに何クロック要求するか84MHz-->10kHz
 		TIM_TimeBaseStructure.TIM_ClockDivision = TIM_CKD_DIV1;//84MHz / 1 = 84MHz
 		TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
 		TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
@@ -568,8 +584,7 @@ namespace PWM{
 	GPIO::AssignmentHolder pwm_4(GPIOB, GPIO_Pin_9);//CN10.5
 	
 	const unsigned short period = 1000;
-	const unsigned short prescale = 84;
-	const unsigned long Hz = 84000000 / (period * prescale);
+	const unsigned short prescale = SYS_FREQ / 1000000;
 
 	void setting(void){
 		GPIO_InitTypeDef GPIO_InitStructure = {0};
@@ -619,22 +634,22 @@ namespace PWM{
 
 	void duty1(float ratio){
 		if (ratio < 0 || ratio > 1) return;
-		TIM_SetCompare1(TIM4, (unsigned long)(ratio*Hz));
+		TIM_SetCompare1(TIM4, (unsigned long)(ratio*period));
 	}
 
 	void duty2(float ratio){
 		if (ratio < 0 || ratio > 1) return;
-		TIM_SetCompare2(TIM4, (unsigned long)(ratio*Hz));
+		TIM_SetCompare2(TIM4, (unsigned long)(ratio*period));
 	}
 
 	void duty3(float ratio){
 		if (ratio < 0 || ratio > 1) return;
-		TIM_SetCompare3(TIM4, (unsigned long)(ratio*Hz));
+		TIM_SetCompare3(TIM4, (unsigned long)(ratio*period));
 	}
 
 	void duty4(float ratio){
 		if (ratio < 0 || ratio > 1) return;
-		TIM_SetCompare4(TIM4, (unsigned long)(ratio*Hz));
+		TIM_SetCompare4(TIM4, (unsigned long)(ratio*period));
 	}
 
 	void duty(int n, float ratio) {
@@ -797,8 +812,6 @@ int main(void)
 	STEP::setting();
 	PWM::setting();
 
-	Delay(0xff);
-
 
 	USART::out << "Connected to Nucleo F401RE." << USART::endl;
 
@@ -808,6 +821,8 @@ int main(void)
 	//printf("Frequency\r\nSYSCLK:%d\r\nHCLK:%d\r\nPCLK1:%d\r\nPCLK2:%d\r\n", RCC_ClockFreq.SYSCLK_Frequency, RCC_ClockFreq.HCLK_Frequency, RCC_ClockFreq.PCLK1_Frequency, RCC_ClockFreq.PCLK2_Frequency);
 	USART::out << "SYSCLK:" << RCC_ClockFreq.SYSCLK_Frequency << USART::endl
 		<< "HCLK:" << RCC_ClockFreq.HCLK_Frequency << USART::endl;
+
+	Delay(0x100000);
 
 	//モータSPI初期化
 	if ((char)SPI::transaction2(0) == -128) USART::out << "get initial value R\n\r";
@@ -819,6 +834,7 @@ int main(void)
 	Timer::begin2();//モータ用割り込み発生開始
 	Timer::begin3();//モータ用割り込み発生開始
 	STEP::reset_stp();
+
 
 	while (1){
 		//USART::out << (uint8_t)c.get_button(0) << "," << (uint8_t)c.get_button(1) <<" " << "Lv:" << c.get_stick(1, 1) << "Ls:" << c.get_stick(1, 0) << "Rv:" << c.get_stick(0, 1) << "Rs:" << c.get_stick(0, 0) << USART::endl;
@@ -870,18 +886,23 @@ void motor_control(void){
 		dutyL = 0;
 	}*/
 	if(c.pushed(up)) {
+		if(c.triggered(up)) USART::out << __LINE__ << USART::endl;//ありえない
 		dutyR = 50;
 		dutyL = 50;
 	} else if (c.pushed(right)) {
+		if(c.triggered(right)) USART::out << __LINE__ << USART::endl;//ありえない
 		dutyR = -50;
 		dutyL = 50;
 	} else if (c.pushed(left)) {
+		if(c.triggered(left)) USART::out << __LINE__ << USART::endl;//ありえない
 		dutyR = 50;
 		dutyL = -50;
 	} else if (c.pushed(down)) {
+		if(c.triggered(down)) USART::out << __LINE__ << USART::endl;//ありえない
 		dutyR = -50;
 		dutyL = -50;
 	} else {
+		//USART::out << __LINE__ << USART::endl;//ありえない
 		dutyR = 0;
 		dutyL = 0;
 	}
@@ -912,18 +933,19 @@ void motor_control(void){
 
 }
 
-void step_control(void){
-	if(c.pushed(tri)) {
-		STEP::stpm_Pulse(STEP::CCW);
-	} else if (c.pushed(cr)) {
+void stepm_control(void){
+	if (c.pushed(tri)) {
 		STEP::stpm_Pulse(STEP::CW);
+	}else if(c.pushed(cr)) {
+		STEP::stpm_Pulse(STEP::CCW);
 	}
+}
 
+void stepa_control(void){
 	if(magazine_move) {
 		STEP::stpa_Pulse(stpa_dir);
 		magazine_move--;
 	}
-
 }
 
 void sya_control(void){
@@ -1027,9 +1049,10 @@ extern "C" void TIM3_IRQHandler(void)
 		TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
 
 		//USART::out << "r" << USART::endl;//ありえない
-		if (!(cnt%5)) step_control();
+		if (!(cnt%5)) stepa_control();
+		if (!(cnt%10)) stepm_control();
 		cnt++;
-		if (cnt == 100) cnt = 0;
+		if (cnt == 1000) cnt = 0;
 	}
 }
 /**************************************************************************************/
