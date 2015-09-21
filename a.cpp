@@ -60,6 +60,9 @@ enum class Mode{
 	Move,
 	tenp,
 	tenn,
+	trans,
+	tyoup,
+	tyoun,
 };
 
 const float sens_pos[8] = { -114.0f, -81.0f,-51.0f, -18.0f, +18.0f, +51.0f, +81.5f, +114.0f };//センサー位置(右に向かって正になる軸)mm単位
@@ -67,16 +70,20 @@ const float sens_pos[8] = { -114.0f, -81.0f,-51.0f, -18.0f, +18.0f, +51.0f, +81.
 volatile const char speed_straight = 100;//通常時の直進スピード
 volatile const char speed_back = -60;
 volatile char back_acc = 0;
+volatile char back_bias = 0;
 volatile char inf_spd = 10;
 volatile char front_acc = 0;
+volatile char velL = 0;
+volatile char velR = 0;
+
 
 
 //------------------------変数------------------------------------
 volatile int time_count = 0;
 volatile Mode exec_mode = Mode::Stop;
 
-volatile uint16_t line_green[8] = { 1053, 678, 685, 939, 1085, 574, 904, 721};//{5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000};
-volatile uint16_t line_white[8] = { 3581, 2225, 2392, 3328, 3521, 1918, 2888, 1931 };//{ 0, 0, 0, 0, 0, 0, 0, 0 };
+volatile uint16_t line_green[8] = {1450,806,833,1461,2045,912,1290,783};//{5000, 5000, 5000, 5000, 5000, 5000, 5000, 5000};
+volatile uint16_t line_white[8] = {3831,2773,3079,3815,3845,2747,3839,3079};//{ 0, 0, 0, 0, 0, 0, 0, 0 };
 volatile uint16_t line_sensor[8];
 volatile float normalized_sensor[8];
 
@@ -88,8 +95,8 @@ volatile int count_lineL_out, count_lineR_out;
 
 volatile float prev_pos = 0.0f;//前回の白線位置
 
-volatile float Kp = 0.20;	//P制御の回転における比例ゲイン217-210
-volatile float Kd = 0.10f;	//D制御の回転における微分ゲイン
+volatile float Kp = 0.30f;	//P制御の回転における比例ゲイン217-210
+volatile float Kd = 0.15f;	//D制御の回転における微分ゲイン
 
 
 volatile float move_straight = 0;
@@ -185,8 +192,9 @@ volatile void wait_line_over(int k){
 	/*while (!((count_lineL_out + count_lineR_out) % 2 == 0 && (count_lineL_out + count_lineR_out) / 2 == k)){
 //		USART::out << count_lineL_out << "," << count_lineR_out << USART::endl;
 	}*/
-	while((count_lineL_out + count_lineR_out)  < (k*2) )
-		USART::out <<count_lineL_out<<", "<<count_lineR_out<<USART::endl;
+	while((count_lineL_out < k) || (count_lineR_out  < k));
+		//USART::out <<count_lineL_out<<", "<<count_lineR_out<<"<"<<k<<USART::endl;
+		USART::out <<count_lineL_out<<", "<<count_lineR_out<<"<"<<k<<USART::endl;
 }
 
 void normalize_sensor(void){
@@ -278,11 +286,10 @@ volatile void linetrace(int k){
 	prev_pos = calc_pos();
 	count_lineL_out = count_lineR_out = 0;
 //	count_lineL_in = count_lineR_in = 0;
-	volatile char prev_spd = speed_straight;
 	int flag = 0;
-	while (count_lineL_out + count_lineR_out < k*2){
+	while (count_lineL_out < k || count_lineR_out < k){
 		//USART::out <<count_lineL_out<<", "<<count_lineR_out<<USART::endl;
-		if(flag == 0 && (k-2)*2 <= count_lineL_out + count_lineR_out) {
+		if(flag == 0 && (k-2)*2 <= count_lineL_out + count_lineR_out && k != 1 && k!= 2) {
 			flag = 1,front_acc = -1;
 			USART::out <<count_lineL_out<<", "<<count_lineR_out<<USART::endl;
 		}
@@ -324,20 +331,22 @@ volatile void straight(int k){
 volatile void back(int k){
 	exec_mode = Mode::Back;
 	back_acc = 50;
-	const int table[] = {5, 5, 4, 2, 3, 3, 3, 4};
+	const int table[] = {1, 1, 4, 5, 2, 2, 3, 3};
+	back_bias = table[k - 1];
 	wait_line_over(k);
 }
 
-volatile void turn(int n){
+volatile void turn_(int n){
 	exec_mode = Mode::Turn;
 	wait_x0ms(n);
 }
 
-volatile void turnL(void){
+volatile void turn(Mode mode){
 	//両端センサが入るまで減速->低速度
 	//左を止めて右を動かす
 	//二本見るまで動かす
 	//今までより遠いほうを目標にして直進成分0でpidしてみる
+	/*
 	exec_mode = Mode::Move;
 	count_lineL_in = count_lineR_in = 0;
 	move_straight = 40; move_turn = 0;
@@ -385,7 +394,33 @@ volatile void turnL(void){
 //		exec_mode = Mode::LinetraceTurn;
 	}
 	
-	
+	*/
+	if(mode != Mode::tenn || mode != Mode::tenp) mode = Mode::tenp;//n ri,p le
+	exec_mode = mode;
+#define cnt_on_line for(i = cntline = 0;i < 8; i++) cntline += is_on_line(i)
+	int i = 0, cntline = 0, prevcnt = 0;
+	cnt_on_line;
+	prevcnt = cntline;
+	cnt_on_line;
+	//while(prevcnt != cntline) cnt_on_line;
+	wait_x0ms(80);
+	while(!((is_on_line(3) || is_on_line(4)) && calc_pos() < 10));
+	exec_mode = Mode::Stop;
+}
+
+volatile void turn180(Mode mode){
+	if(mode != Mode::tyoup || mode != Mode::tyoun) mode = Mode::tyoun;//n ri,p le
+	exec_mode = mode;
+#define cnt_on_line for(i = cntline = 0;i < 8; i++) cntline += is_on_line(i)
+	int i = 0, cntline = 0, prevcnt = 0;
+	cnt_on_line;
+	prevcnt = cntline;
+	cnt_on_line;
+	//while(prevcnt != cntline) cnt_on_line;
+	wait_x0ms(50);
+	while(!((is_on_line(3) || is_on_line(4)) && calc_pos() < 10));
+	wait_x0ms(50);
+	while(!((is_on_line(3) || is_on_line(4)) && calc_pos() < 10));
 	exec_mode = Mode::Stop;
 }
 
@@ -399,6 +434,7 @@ void unhold(void) {
 	PWM::duty(2, 0.11);//left
 }
 void move(float straight, float turn); //進行方向速度と回転方向速度を指定、ターンの正は反時計回り
+void transaction_duty(char dutyL,char dutyR);
 
 int main(void){
 	//一連の初期化
@@ -416,34 +452,142 @@ int main(void){
 	USART::out << "and begin Timer2" << USART::endl;
 	Timer::begin2();//モータ用割り込み発生開始
 	
+	unhold();
 	//calibulation();//センサーキャリブレーション
 	USART::out << line_green[0] << "," << line_green[1] << "," << line_green[2] << "," << line_green[3] << "," << line_green[4] << "," << line_green[5] << "," << line_green[6] << "," << line_green[7] << USART::endl;
 	USART::out << line_white[0] << "," << line_white[1] << "," << line_white[2] << "," << line_white[3] << "," << line_white[4] << "," << line_white[5] << "," << line_white[6] << "," << line_white[7] << USART::endl;
 	//入力待ち
+st:;
 	unhold();
-	while (IO::Read(user_switch));
+	while (IO::Read(switch1) && IO::Read(switch2) && IO::Read(switch3) && IO::Read(switch4) && IO::Read(switch5));
+	if(!IO::Read(switch2)) goto sw2;
+	if(!IO::Read(switch3)) goto sw3;
+	if(!IO::Read(switch4)) goto sw4;
+	if(!IO::Read(switch5)) goto sw5;
 	USART::out << "start!" << USART::endl;
-
-	linetrace(8);
+	//velL = 105;
+	//velR = 110;
+	//exec_mode = Mode::trans;
+	
+	//straight(4);
+	linetrace(6);
+	//linetrace(1);
 	USART::out << "示談" << USART::endl;
-	move(10,0);
-	wait_x0ms(10);
-	stop(10);
-	while (IO::Read(user_switch));
-	back(8);
-	stop(10);
+	//wait_line_over(8);
+	move(20,0);
+	wait_x0ms(20);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	hold();
+	turn180(Mode::tyoup);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	linetrace(4);
+	move(20,0);
+	wait_x0ms(100);
+	stop(10);front_acc = 0;
+
+	goto st;
+	while(1);
+sw2:;
+	linetrace(3);
+	//linetrace(1);
+	USART::out << "示談" << USART::endl;
+	//wait_line_over(8);
+	//move(20,0);
+	wait_x0ms(20);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	hold();
+	turn180(Mode::tyoup);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	linetrace(1);
+	//move(20,0);
+	wait_x0ms(100);
+	stop(10);front_acc = 0;
+
+	goto st;
 	while(1);
 
+sw3:;
+	linetrace(6);
+	//linetrace(1);
+	USART::out << "示談" << USART::endl;
+	//wait_line_over(8);
+	//move(20,0);
+	wait_x0ms(20);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	hold();
+	//turn180(Mode::tyoun);
+	//stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	back(5);
+	//move(-20,0);
+	wait_x0ms(100);
+	stop(10);front_acc = 0;
+
+	goto st;
+	while(1);
+
+sw4:;
+	linetrace(3);
+	//linetrace(1);
+	USART::out << "示談" << USART::endl;
+	//wait_line_over(8);
+	//move(20,0);
+	wait_x0ms(20);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	hold();
+	//turn180(Mode::tyoun);
+	//stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	back(2);
+	//move(-20,0);
+	wait_x0ms(100);
+	stop(10);front_acc = 0;
+
+	goto st;
+	while(1);
+
+sw5:;
+	//move(80,0);
+	straight(8);
+	//linetrace(1);
+	USART::out << "示談" << USART::endl;
+	//wait_line_over(8);
+	//move(20,0);
+	wait_x0ms(20);
+	stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	hold();
+	//turn180(Mode::tyoun);
+	//stop(50);front_acc = 0;
+	//while (IO::Read(switch2));
+	back(7);
+	//move(-20,0);
+	wait_x0ms(100);
+	stop(10);front_acc = 0;
+
+	goto st;
+	while(1);
+/*
 	straight(8);
 	hold();
 	back(8);
 	stop(100);
+	
 	exec_mode = Mode::tenp;
-	wait_x0ms(80);
+	wait_x0ms(160);
+	stop(10);
+	while(1);
 	exec_mode = Mode::tenn;
 	wait_x0ms(80);
 	while(1);
-	//turnL();/*linetrace(3);*/ stop(100); while (1);//back(3); stop(100);
+	*/
+	//turnR();/*linetrace(3);*/ stop(100); while (1);//back(3); stop(100);
 	//straight(6);stop(100);
 	//linetrace(6); stop(100); back(6); stop(100); while (1);
 	//turn(1000);
@@ -574,15 +718,15 @@ void motor_control(void){
 		transaction_duty(0,0);
 		break;
 	case Mode::Straight:
-		move(120,0);
+		move(100,0);
 		break;
 	case Mode::Back:
-		if(back_acc > 0) back_acc--;
-		move(speed_back + back_acc, 2);
+		if(back_acc > 0 && back_acc < 60) back_acc--;
+		move(speed_back + back_acc, back_bias);
 		//mode_linetrace(-speed_straight, -Kp, -Kd);
 		break;
 	case Mode::Linetrace:
-		if(speed_straight + front_acc > 10 && -90 < front_acc && front_acc < 0) front_acc--;
+		if(speed_straight + front_acc > 20 && -80 < front_acc && front_acc < 0) front_acc--;
 		mode_linetrace(speed_straight + front_acc,Kp,Kd);
 		break;
 	case Mode::LinetraceTurn:
@@ -595,9 +739,18 @@ void motor_control(void){
 		move(move_straight,move_turn);
 		break;
 	case Mode::tenp:
-		move(0,40);
+		move(10,30);
 		break;
 	case Mode::tenn:
+		move(10,-30);
+		break;
+	case Mode::trans:
+		transaction_duty(velL, velR);
+		break;
+	case Mode::tyoup:
+		move(0,40);
+		break;
+	case Mode::tyoun:
 		move(0,-40);
 		break;
 	default: break;
